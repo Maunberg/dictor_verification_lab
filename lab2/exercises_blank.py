@@ -16,6 +16,20 @@ def load_vad_markup(path_to_rttm, signal, fs):
     ###########################################################
     # Here is your code
     
+    with open(path_to_rttm, 'r') as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) >= 4:
+                # Формат RTTM: SPEAKER file 1 start_time duration <NA> <NA> speaker_id <NA> <NA>
+                start_time = float(parts[3])
+                duration = float(parts[4])
+                end_time = start_time + duration
+    
+                start_sample = int(start_time * fs)
+                end_sample = int(end_time * fs)
+                
+                vad_markup[start_sample:end_sample] = 1.0
+    
     ###########################################################
     
     return vad_markup
@@ -24,10 +38,16 @@ def framing(signal, window=320, shift=160):
     # Function to create frames from signal
     
     shape   = (int((signal.shape[0] - window)/shift + 1), window)
-    frames  = np.zeros().astype('float32')
+    frames  = np.zeros(shape).astype('float32')
 
     ###########################################################
     # Here is your code
+    
+    # Создаем фреймы с перекрытием
+    for i in range(shape[0]):
+        start_idx = i * shift
+        end_idx = start_idx + window
+        frames[i] = signal[start_idx:end_idx]
     
     ###########################################################
     
@@ -36,12 +56,10 @@ def framing(signal, window=320, shift=160):
 def frame_energy(frames):
     # Function to compute frame energies
     
-    E = np.zeros(frames.shape[0]).astype('float32')
-
-    ###########################################################
-    # Here is your code
-    
-    ###########################################################
+    # E = np.zeros(frames.shape[0]).astype('float32')
+    # for i in range(frames.shape[0]):
+    #     E[i] = np.sum(frames[i] ** 2)
+    E = np.sum(frames ** 2, axis=1).astype('float32')
     
     return E
 
@@ -52,6 +70,16 @@ def norm_energy(E):
 
     ###########################################################
     # Here is your code
+    
+    # Вычисляем среднее и стандартное отклонение энергии
+    mean_E = np.mean(E)
+    std_E = np.std(E, ddof=1) # ddof=1 для вычисления несмещенной оценки стандартного отклонения
+    
+    # Нормализуем энергию (z-score нормализация)
+    if std_E > 0:
+        E_norm = (E - mean_E) / std_E
+    else:
+        E_norm = E - mean_E
     
     ###########################################################
     
@@ -71,15 +99,36 @@ def gmm_train(E, gauss_pdf, n_realignment):
         # E-step
         ###########################################################
         # Here is your code
+        
+        # Вычисляем апостериорные вероятности для каждого компонента
+        for k in range(len(w)):
+            for i in range(len(E)):
+                g[i, k] = w[k] * gauss_pdf(E[i], m[k], sigma[k])
+        
+        # Нормализуем вероятности
+        g_sum = np.sum(g, axis=1, keepdims=True)
+        g = g / (g_sum + 1e-10)  # Добавляем малое значение для избежания деления на ноль
 
         ###########################################################
 
         # M-step
         ###########################################################
         # Here is your code
-
-        ###########################################################
         
+        # Обновляем веса компонентов
+        w = np.mean(g, axis=0)
+        
+        # Обновляем средние значения
+        for k in range(len(w)):
+            if w[k] > 1e-10:  # Избегаем деления на ноль
+                m[k] = np.sum(g[:, k] * E) / np.sum(g[:, k])
+        
+        # Обновляем дисперсии
+        for k in range(len(w)):
+            if w[k] > 1e-10:  # Избегаем деления на ноль
+                sigma[k] = np.sqrt(np.sum(g[:, k] * (E - m[k])**2) / np.sum(g[:, k]))
+
+        ###########################################################    
     return w, m, sigma
 
 def eval_frame_post_prob(E, gauss_pdf, w, m, sigma):
@@ -89,6 +138,22 @@ def eval_frame_post_prob(E, gauss_pdf, w, m, sigma):
 
     ###########################################################
     # Here is your code
+    
+    # Вычисляем апостериорную вероятность для каждого фрейма
+    for i in range(len(E)):
+        # Вычисляем вероятности для всех компонентов
+        probs = np.zeros(len(w))
+        for k in range(len(w)):
+            probs[k] = w[k] * gauss_pdf(E[i], m[k], sigma[k])
+        
+        # Нормализуем вероятности
+        total_prob = np.sum(probs)
+        if total_prob > 0:
+            probs = probs / total_prob
+        
+        # g0 - это вероятность того, что фрейм НЕ является речью
+        # Предполагаем, что первый компонент (индекс 0) соответствует не-речи
+        g0[i] = probs[0]
 
     ###########################################################
             
@@ -138,6 +203,9 @@ def reverb(signal, impulse_response):
     ###########################################################
     # Here is your code
     
+    # Применяем свертку сигнала с импульсной характеристикой для создания реверберации
+    signal_reverb = scipy.signal.convolve(signal, impulse_response, mode='same')
+    
     ###########################################################
     
     return signal_reverb
@@ -149,6 +217,12 @@ def awgn(signal, sigma_noise):
     
     ###########################################################
     # Here is your code
+    
+    # Генерируем белый гауссов шум с заданным стандартным отклонением
+    noise = np.random.normal(0, sigma_noise, len(signal))
+    
+    # Добавляем шум к исходному сигналу
+    signal_noise = signal + noise
     
     ###########################################################
     

@@ -101,15 +101,15 @@ def compute_fbank_filters(nfilt=40, sample_rate=16000, NFFT=512):
     ###########################################################
     # Here is your code to convert Convert Hz to Mel: 
     # high_freq -> high_freq_mel
-    high_freq_mel = (2595 * np.log10(1 + (high_freq / 700)))  # Convert Hz to Mel
+    high_freq_mel = (2595 * np.log10(1 + high_freq / 700))  
     ###########################################################
 
-    mel_points = np.linspace(low_freq_mel, high_freq_mel, nfilt + 2) # equally spaced in mel scale
+    mel_points = np.linspace(low_freq_mel, high_freq_mel, nfilt + 2)
 
     ###########################################################
     # Here is your code to convert Convert Mel to Hz: 
     # mel_points -> hz_points
-    hz_points = (700 * (10**(mel_points / 2595) - 1))  # Convert Mel to Hz
+    hz_points = (700 * (10**(mel_points / 2595) - 1)) 
     ###########################################################
 
     bin = np.floor((NFFT + 1) * hz_points / sample_rate)
@@ -142,12 +142,12 @@ def compute_fbanks_features(pow_frames, fbank):
     ###########################################################
 
     filter_banks_features = np.where(filter_banks_features == 0, np.finfo(float).eps,
-                                     filter_banks_features) # numerical stability
+                                     filter_banks_features)
     filter_banks_features = np.log(filter_banks_features)
 
     return filter_banks_features
 
-def compute_mfcc(filter_banks_features, num_ceps=20):
+def compute_mfcc(filter_banks_features, num_ceps=13):
     # Here you need to compute MFCCs features using precomputed log mel FB energies matrix
     
     """
@@ -158,7 +158,7 @@ def compute_mfcc(filter_banks_features, num_ceps=20):
     
     ###########################################################
     # Here is your code to compute mfcc features
-    mfcc = dct(filter_banks_features, type=2, axis=1, norm='ortho')[:, :num_ceps]
+    mfcc = dct(filter_banks_features, type=2, axis=1, norm='ortho')[:, 1:num_ceps]
     ###########################################################
 
     return mfcc
