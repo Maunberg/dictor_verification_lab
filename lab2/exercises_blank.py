@@ -59,7 +59,7 @@ def frame_energy(frames):
     # E = np.zeros(frames.shape[0]).astype('float32')
     # for i in range(frames.shape[0]):
     #     E[i] = np.sum(frames[i] ** 2)
-    E = np.sum(frames ** 2, axis=1).astype('float32')
+    E = np.sum(frames , axis=1).astype('float32') #** 2
     
     return E
 
