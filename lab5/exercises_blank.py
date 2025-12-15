@@ -124,10 +124,67 @@ def s_norm(test_data, lines, adapt_data, N_s=200, eps=0.5):
         A.append(adapt_data[a].squeeze(0).numpy())
     A = np.array(A)
     
-    ###########################################################
-    # Here is your code
-    
-    ###########################################################
+    def l2_normalize(mat):
+        norms = np.linalg.norm(mat, axis=1, keepdims=True)
+        norms = np.maximum(norms, 1e-12)
+        return mat / norms
+
+    def stack_embeddings(keys, source_dict):
+        emb_list = []
+        for key in keys:
+            emb_list.append(source_dict[key].squeeze(0).numpy())
+        return np.stack(emb_list).astype(np.float32)
+
+    E = l2_normalize(stack_embeddings(enroll_list, test_data))
+    T = l2_normalize(stack_embeddings(test_list, test_data))
+    A = l2_normalize(stack_embeddings(adapt_list, adapt_data))
+
+    enroll_idx = {enroll_list[i]: i for i in range(len(enroll_list))}
+    test_idx = {test_list[i]: i for i in range(len(test_list))}
+
+    N_s = min(N_s, A.shape[0])
+
+    enroll_stats = {}
+    test_stats = {}
+
+    def compute_stats(name, idx_map, emb_matrix, cache):
+        if name in cache:
+            return cache[name]
+
+        vec = emb_matrix[idx_map[name]]
+        sims = A.dot(vec)
+
+        if N_s <= 0 or sims.size == 0:
+            top_scores = sims
+        elif N_s >= sims.size:
+            top_scores = sims
+        else:
+            top_idx = np.argpartition(sims, -N_s)[-N_s:]
+            top_scores = sims[top_idx]
+
+        mu = float(np.mean(top_scores)) if top_scores.size else 0.0
+        sigma = float(np.std(top_scores)) if top_scores.size else 0.0
+        sigma = max(sigma, eps)
+
+        cache[name] = (mu, sigma)
+        return cache[name]
+
+    for idx, line in enumerate(tqdm.tqdm(lines, total=len(lines), desc='Scoring with s-norm')):
+        label, enroll_wav, test_wav = line.strip().split()
+
+        enroll_vec = E[enroll_idx[enroll_wav]]
+        test_vec = T[test_idx[test_wav]]
+
+        raw_score = float(np.dot(enroll_vec, test_vec))
+
+        mu_e, sigma_e = compute_stats(enroll_wav, enroll_idx, E, enroll_stats)
+        mu_t, sigma_t = compute_stats(test_wav, test_idx, T, test_stats)
+
+        score_norm = ((raw_score - mu_e) / (2.0 * sigma_e)) + ((raw_score - mu_t) / (2.0 * sigma_t))
+
+        scores_adapted.append(score_norm)
+        all_labels.append(int(label))
+        all_trials.append(enroll_wav + " " + test_wav)
 
     return scores_adapted, all_labels, all_trials
 
@@ -159,10 +216,10 @@ class LinearCalibrationModel(torch.nn.Module):
 
     def forward(self, x):
         
-        ###########################################################
-        # Here is your code
-            
-        ###########################################################
+        if x.dim() == 1:
+            x = x.unsqueeze(-1)
+
+        calib_x = self.calib_params(x)
 
         return calib_x
     
@@ -188,10 +245,13 @@ class CalibrationLoss(nn.Module):
         
         loss_value = 0
         
-        ###########################################################
-        # Here is your code
+        target_llrs = target_llrs.view(-1)
+        nontarget_llrs = nontarget_llrs.view(-1)
 
-        ###########################################################
+        tar_loss = negative_log_sigmoid(target_llrs + self.alpha)
+        imp_loss = negative_log_sigmoid(-(nontarget_llrs + self.alpha))
+
+        loss_value = self.ptar * tar_loss.mean() + (1 - self.ptar) * imp_loss.mean()
 
         return loss_value
 
@@ -202,20 +262,29 @@ def train_calibration(train_loader, model, criterion, optimizer, scheduler, num_
     
     for epoch in range(0, num_epochs):
         
+        loss = None
         for batch_idx, batch_data in enumerate(train_loader):
             tar_sc = batch_data[0]
             imp_sc = batch_data[1]
             
-            ###########################################################
-            # Here is your code
-            
-            ###########################################################
+            tar_sc = tar_sc.squeeze(0).float().unsqueeze(1)
+            imp_sc = imp_sc.squeeze(0).float().unsqueeze(1)
+
+            optimizer.zero_grad()
+
+            tar_scores = model(tar_sc)
+            imp_scores = model(imp_sc)
+
+            loss = criterion(tar_scores, imp_scores)
+            loss.backward()
+            optimizer.step()
                             
         lr_value = optimizer.param_groups[0]['lr']
 
-        if verbose:
+        if verbose and loss is not None:
             print("Epoch {:1.0f}, LR {:f} Loss {:f}".format(epoch, lr_value, loss.item()))
                 
-        scheduler[0].step()
+        if scheduler is not None:
+            scheduler[0].step()
     
     return
